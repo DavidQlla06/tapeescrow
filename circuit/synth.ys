@@ -1,0 +1,26 @@
+# synth.ys — Yosys synthesis script for release_logic.v
+# Produces a NAND-only netlist (TapeOut processors are built from NAND
+# gates and LATCHes), written to release_logic_netlist.v.
+#
+# Run:
+#     yosys synth.ys
+#
+# Route: `abc -g NAND` maps the design to $_NAND_ / $_NOT_ internal cells.
+# Yosys `write_verilog` renders those cells as continuous assignments
+# (`assign Y = ~(A & B);` / `assign Y = ~A;`), which iverilog simulates
+# directly and verify_netlist.py evaluates independently.
+#
+# NOTE: the `abc -liberty nand.lib` route does NOT work with Yosys/ABC
+# 0.33 — ABC rejects nand.lib ("Library with only 1 cell classes cannot
+# be used": NAND2 and NAND2X have the same function, so ABC counts them
+# as a single cell class). nand.lib is kept in the repo for reference;
+# the -g NAND route below is the one that actually produces the netlist.
+read_verilog release_logic.v
+hierarchy -top release_logic
+proc
+opt
+synth -noabc
+abc -g NAND
+clean
+write_verilog -noattr release_logic_netlist.v
+stat
