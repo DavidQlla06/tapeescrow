@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TapeEscrow — AI-agent work escrow, released by a TapeOut circuit</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e; --accent:#2f81f7; --green:#3fb950; --red:#f85149; --yellow:#d29922; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  header { padding: 28px 20px 8px; max-width: 960px; margin: 0 auto; }
+  header h1 { margin:0 0 6px; font-size: 28px; }
+  header p { margin: 4px 0; color: var(--muted); }
+  code { background:#21262d; padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+  main { max-width: 960px; margin: 0 auto; padding: 12px 20px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 14px 0; }
+  .card h2 { margin: 0 0 10px; font-size: 18px; }
+  label { display:block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input, select { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background:#0d1117; color: var(--text); font-size: 14px; }
+  button { background: var(--accent); color:#fff; border:0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; margin: 8px 6px 0 0; }
+  button.secondary { background:#21262d; color: var(--text); border:1px solid var(--line); }
+  button.danger { background: var(--red); }
+  button:disabled { opacity:.45; cursor: default; }
+  .row { display:flex; gap:12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 200px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .pill { display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.green { background: rgba(63,185,80,.15); color: var(--green); }
+  .pill.red { background: rgba(248,81,73,.15); color: var(--red); }
+  .pill.yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .pill.grey { background: rgba(139,148,158,.15); color: var(--muted); }
+  .job { border-top: 1px solid var(--line); padding: 12px 0; }
+  .job:first-of-type { border-top: 0; }
+  .job h3 { margin: 0 0 6px; font-size: 16px; }
+  .kv { font-size: 13px; color: var(--muted); line-height: 1.7; word-break: break-all; }
+  .kv b { color: var(--text); font-weight: 600; }
+  #log { white-space: pre-wrap; font-size: 13px; background:#0d1117; border:1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 44px; max-height: 220px; overflow:auto; }
+  .formula { font-size: 15px; background:#0d1117; border:1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+  footer { max-width: 960px; margin: 0 auto; padding: 0 20px 40px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TapeEscrow</h1>
+  <p>Escrow for hiring AI agents. A client locks USDC; the funds are released to the agent <b>only</b> when an on-chain TapeOut circuit decides <b>RELEASE</b>.</p>
+  <p class="formula">RELEASE = done AND (approved OR timeout) AND (NOT disputed)</p>
+  <p class="muted">Built for the OKX X Layer “TapeOut Accelerate” hackathon. Chain: X Layer mainnet (chain ID 196). Payment token: USDC.</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>1. Connect</h2>
+    <div class="row">
+      <div>
+        <label for="rpcUrl">RPC URL (X Layer)</label>
+        <input id="rpcUrl" value="https://rpc.xlayer.tech">
+      </div>
+      <div>
+        <label for="contractAddr">TapeEscrow contract address</label>
+        <input id="contractAddr" placeholder="0x... (paste after deploy)">
+      </div>
+    </div>
+    <button id="connectBtn">Connect wallet</button>
+    <button id="loadBtn" class="secondary">Load jobs</button>
+    <p class="muted" id="accountLine">Not connected.</p>
+  </div>
+
+  <div class="card">
+    <h2>2. Create a job (client)</h2>
+    <p class="muted">Lock USDC for an agent's job. A 1% fee goes to the fee collector at lock time; the net amount is held by the escrow. The agent must approve this contract to spend USDC first — the button below handles the approval.</p>
+    <div class="row">
+      <div>
+        <label for="agentAddr">Agent wallet address</label>
+        <input id="agentAddr" placeholder="0x...">
+      </div>
+      <div>
+        <label for="amountUsdc">Amount (USDC)</label>
+        <input id="amountUsdc" type="number" min="0" step="0.01" placeholder="e.g. 100">
+      </div>
+      <div>
+        <label for="days">Deadline (days from now)</label>
+        <input id="days" type="number" min="1" step="1" value="7">
+      </div>
+    </div>
+    <button id="approveBtn" class="secondary">1. Approve USDC</button>
+    <button id="lockBtn">2. Lock escrow</button>
+  </div>
+
+  <div class="card">
+    <h2>3. Jobs</h2>
+    <p class="muted">Each job shows the live circuit decision, read on-chain via <code>circuitDecision(jobId)</code>. Claim succeeds only when it reads RELEASE.</p>
+    <div id="jobs"><p class="muted">No jobs loaded yet — connect a wallet and press “Load jobs”.</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Activity log</h2>
+    <div id="log">Ready.</div>
+  </div>
+</main>
+
+<footer>
+  TapeEscrow — MIT licensed. Circuit: <code>circuit/release_logic.v</code> (4 inputs, 1 output, NAND-only netlist verified over all 16 input combinations). Contract: <code>contracts/TapeEscrow.sol</code>. Full docs in the repo README.
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
+<script>
+// ---- Config (filled in after deploy; also editable in the UI) ----
+const DEFAULT_RPC = "https://rpc.xlayer.tech";
+const XLAYER_CHAIN_ID = 196n;
+const USDC_DECIMALS = 6;
+const ABI = [{"type": "constructor", "inputs": [{"name": "_paymentToken", "type": "address", "internalType": "address"}, {"name": "_circuit", "type": "address", "internalType": "address"}, {"name": "_circuitId", "type": "uint256", "internalType": "uint256"}, {"name": "_feeCollector", "type": "address", "internalType": "address"}, {"name": "_arbiter", "type": "address", "internalType": "address"}], "stateMutability": "nonpayable"}, {"type": "function", "name": "BPS_DENOMINATOR", "inputs": [], "outputs": [{"name": "", "type": "uint256", "internalType": "uint256"}], "stateMutability": "view"}, {"type": "function", "name": "FEE_BPS", "inputs": [], "outputs": [{"name": "", "type": "uint256", "internalType": "uint256"}], "stateMutability": "view"}, {"type": "function", "name": "approve", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [], "stateMutability": "nonpayable"}, {"type": "function", "name": "arbiter", "inputs": [], "outputs": [{"name": "", "type": "address", "internalType": "address"}], "stateMutability": "view"}, {"type": "function", "name": "circuit", "inputs": [], "outputs": [{"name": "", "type": "address", "internalType": "contract IReleaseCircuit"}], "stateMutability": "view"}, {"type": "function", "name": "circuitDecision", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [{"name": "release", "type": "bool", "internalType": "bool"}], "stateMutability": "view"}, {"type": "function", "name": "circuitId", "inputs": [], "outputs": [{"name": "", "type": "uint256", "internalType": "uint256"}], "stateMutability": "view"}, {"type": "function", "name": "claim", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [], "stateMutability": "nonpayable"}, {"type": "function", "name": "dispute", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [], "stateMutability": "nonpayable"}, {"type": "function", "name": "feeCollector", "inputs": [], "outputs": [{"name": "", "type": "address", "internalType": "address"}], "stateMutability": "view"}, {"type": "function", "name": "getJob", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [{"name": "", "type": "tuple", "internalType": "struct TapeEscrow.Job", "components": [{"name": "client", "type": "address", "internalType": "address"}, {"name": "agent", "type": "address", "internalType": "address"}, {"name": "amount", "type": "uint256", "internalType": "uint256"}, {"name": "fee", "type": "uint256", "internalType": "uint256"}, {"name": "deadline", "type": "uint256", "internalType": "uint256"}, {"name": "done", "type": "bool", "internalType": "bool"}, {"name": "approved", "type": "bool", "internalType": "bool"}, {"name": "disputed", "type": "bool", "internalType": "bool"}, {"name": "status", "type": "uint8", "internalType": "enum TapeEscrow.Status"}]}], "stateMutability": "view"}, {"type": "function", "name": "jobs", "inputs": [{"name": "", "type": "uint256", "internalType": "uint256"}], "outputs": [{"name": "client", "type": "address", "internalType": "address"}, {"name": "agent", "type": "address", "internalType": "address"}, {"name": "amount", "type": "uint256", "internalType": "uint256"}, {"name": "fee", "type": "uint256", "internalType": "uint256"}, {"name": "deadline", "type": "uint256", "internalType": "uint256"}, {"name": "done", "type": "bool", "internalType": "bool"}, {"name": "approved", "type": "bool", "internalType": "bool"}, {"name": "disputed", "type": "bool", "internalType": "bool"}, {"name": "status", "type": "uint8", "internalType": "enum TapeEscrow.Status"}], "stateMutability": "view"}, {"type": "function", "name": "lock", "inputs": [{"name": "agent", "type": "address", "internalType": "address"}, {"name": "amount", "type": "uint256", "internalType": "uint256"}, {"name": "deadline", "type": "uint256", "internalType": "uint256"}], "outputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "stateMutability": "nonpayable"}, {"type": "function", "name": "markDone", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [], "stateMutability": "nonpayable"}, {"type": "function", "name": "nextJobId", "inputs": [], "outputs": [{"name": "", "type": "uint256", "internalType": "uint256"}], "stateMutability": "view"}, {"type": "function", "name": "paymentToken", "inputs": [], "outputs": [{"name": "", "type": "address", "internalType": "contract IERC20"}], "stateMutability": "view"}, {"type": "function", "name": "refund", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}], "outputs": [], "stateMutability": "nonpayable"}, {"type": "function", "name": "resolveDispute", "inputs": [{"name": "jobId", "type": "uint256", "internalType": "uint256"}, {"name": "refundClient", "type": "bool", "internalType": "bool"}], "outputs": [], "stateMutability": "nonpayable"}, {"type": "event", "name": "Approved", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "client", "type": "address", "indexed": true, "internalType": "address"}], "anonymous": false}, {"type": "event", "name": "DisputeResolved", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "refundClient", "type": "bool", "indexed": false, "internalType": "bool"}], "anonymous": false}, {"type": "event", "name": "Disputed", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "by", "type": "address", "indexed": true, "internalType": "address"}], "anonymous": false}, {"type": "event", "name": "JobCreated", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "client", "type": "address", "indexed": true, "internalType": "address"}, {"name": "agent", "type": "address", "indexed": true, "internalType": "address"}, {"name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256"}, {"name": "fee", "type": "uint256", "indexed": false, "internalType": "uint256"}, {"name": "deadline", "type": "uint256", "indexed": false, "internalType": "uint256"}], "anonymous": false}, {"type": "event", "name": "MarkedDone", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "agent", "type": "address", "indexed": true, "internalType": "address"}], "anonymous": false}, {"type": "event", "name": "Refunded", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "client", "type": "address", "indexed": true, "internalType": "address"}, {"name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256"}], "anonymous": false}, {"type": "event", "name": "Released", "inputs": [{"name": "jobId", "type": "uint256", "indexed": true, "internalType": "uint256"}, {"name": "agent", "type": "address", "indexed": true, "internalType": "address"}, {"name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256"}], "anonymous": false}, {"type": "error", "name": "AlreadyApproved", "inputs": []}, {"type": "error", "name": "AlreadyDisputed", "inputs": []}, {"type": "error", "name": "AlreadyDone", "inputs": []}, {"type": "error", "name": "CircuitDenied", "inputs": []}, {"type": "error", "name": "DeadlineInPast", "inputs": []}, {"type": "error", "name": "DeadlineNotReached", "inputs": []}, {"type": "error", "name": "JobNotActive", "inputs": []}, {"type": "error", "name": "NotAgent", "inputs": []}, {"type": "error", "name": "NotArbiter", "inputs": []}, {"type": "error", "name": "NotClient", "inputs": []}, {"type": "error", "name": "NotDisputed", "inputs": []}, {"type": "error", "name": "NotDoneYet", "inputs": []}, {"type": "error", "name": "NotParty", "inputs": []}, {"type": "error", "name": "WorkAlreadyDone", "inputs": []}, {"type": "error", "name": "ZeroAddress", "inputs": []}, {"type": "error", "name": "ZeroAmount", "inputs": []}];
+
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function decimals() view returns (uint8)"
+];
+
+let provider = null;      // read provider (RPC)
+let signer = null;        // wallet signer
+let account = null;
+let escrow = null;        // read contract
+let escrowWrite = null;   // signer contract
+let paymentTokenAddr = null;
+
+const $ = (id) => document.getElementById(id);
+function log(msg) {
+  const el = $("log");
+  el.textContent += "\n" + new Date().toLocaleTimeString() + "  " + msg;
+  el.scrollTop = el.scrollHeight;
+}
+function shortAddr(a) { return a ? a.slice(0, 6) + "..." + a.slice(-4) : "—"; }
+function fmtUsdc(v) { return (Number(v) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 6 }); }
+function statusPill(status) {
+  if (status === 0) return '<span class="pill yellow">Active</span>';
+  if (status === 1) return '<span class="pill green">Released</span>';
+  return '<span class="pill grey">Refunded</span>';
+}
+function circuitPill(release) {
+  return release ? '<span class="pill green">RELEASE</span>' : '<span class="pill red">DENY</span>';
+}
+
+async function getEscrow() {
+  const addr = $("contractAddr").value.trim();
+  if (!ethers.isAddress(addr)) { log("Set a valid TapeEscrow contract address first."); return null; }
+  const rpc = $("rpcUrl").value.trim() || DEFAULT_RPC;
+  provider = new ethers.JsonRpcProvider(rpc);
+  escrow = new ethers.Contract(addr, ABI, provider);
+  if (signer) escrowWrite = escrow.connect(signer);
+  paymentTokenAddr = await escrow.paymentToken();
+  return escrow;
+}
+
+$("connectBtn").onclick = async () => {
+  try {
+    if (!window.ethereum) { log("No wallet found. Install OKX Wallet or MetaMask."); return; }
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    const browserProvider = new ethers.BrowserProvider(window.ethereum);
+    const net = await browserProvider.getNetwork();
+    if (net.chainId !== XLAYER_CHAIN_ID) {
+      log("Wallet is on chain " + net.chainId + " — please switch to X Layer (chain ID 196). Reads still work via RPC.");
+    }
+    signer = await browserProvider.getSigner();
+    account = await signer.getAddress();
+    $("accountLine").textContent = "Connected: " + account + " (chain " + net.chainId + ")";
+    log("Connected wallet " + account);
+    await getEscrow();
+    await loadJobs();
+  } catch (e) { log("Connect failed: " + (e.reason || e.message)); }
+};
+
+$("loadBtn").onclick = async () => { await loadJobs(); };
+
+$("approveBtn").onclick = async () => {
+  try {
+    if (!signer) { log("Connect a wallet first."); return; }
+    const c = await getEscrow(); if (!c) return;
+    const amount = parseFloat($("amountUsdc").value);
+    if (!amount || amount <= 0) { log("Enter an amount first."); return; }
+    const token = new ethers.Contract(paymentTokenAddr, ERC20_ABI, signer);
+    const value = ethers.parseUnits(amount.toString(), USDC_DECIMALS);
+    log("Approving " + amount + " USDC for the escrow...");
+    const tx = await token.approve(await c.getAddress(), value);
+    await tx.wait();
+    log("Approved. Tx: " + tx.hash);
+  } catch (e) { log("Approve failed: " + (e.reason || e.message)); }
+};
+
+$("lockBtn").onclick = async () => {
+  try {
+    if (!signer) { log("Connect a wallet first."); return; }
+    const c = await getEscrow(); if (!c) return;
+    const agent = $("agentAddr").value.trim();
+    const amount = parseFloat($("amountUsdc").value);
+    const days = parseInt($("days").value, 10);
+    if (!ethers.isAddress(agent)) { log("Enter a valid agent address."); return; }
+    if (!amount || amount <= 0) { log("Enter an amount first."); return; }
+    if (!days || days < 1) { log("Enter a deadline in days."); return; }
+    const deadline = Math.floor(Date.now() / 1000) + days * 86400;
+    const value = ethers.parseUnits(amount.toString(), USDC_DECIMALS);
+    log("Locking " + amount + " USDC for " + shortAddr(agent) + ", deadline " + new Date(deadline * 1000).toLocaleString() + "...");
+    const tx = await escrowWrite.lock(agent, value, deadline);
+    const receipt = await tx.wait();
+    log("Locked. Tx: " + tx.hash);
+    await loadJobs();
+  } catch (e) { log("Lock failed: " + (e.reason || e.message)); }
+};
+
+async function loadJobs() {
+  try {
+    const c = await getEscrow(); if (!c) return;
+    const next = Number(await c.nextJobId());
+    const box = $("jobs");
+    if (next === 0) { box.innerHTML = "<p class='muted'>No jobs yet. Create the first one above.</p>"; return; }
+    box.innerHTML = "";
+    for (let id = next - 1; id >= 0; id--) {
+      const job = await c.getJob(id);
+      const release = await c.circuitDecision(id);
+      const dl = new Date(Number(job.deadline) * 1000);
+      const div = document.createElement("div");
+      div.className = "job";
+      div.innerHTML =
+        "<h3>Job #" + id + " " + statusPill(Number(job.status)) + " &nbsp; Circuit: " + circuitPill(release) + "</h3>" +
+        "<div class='kv'>" +
+        "Client: <b>" + job.client + "</b><br>" +
+        "Agent: <b>" + job.agent + "</b><br>" +
+        "Locked: <b>" + fmtUsdc(job.amount) + " USDC</b> (fee paid at lock: " + fmtUsdc(job.fee) + " USDC)<br>" +
+        "Deadline: <b>" + dl.toLocaleString() + "</b><br>" +
+        "Signals — done: <b>" + job.done + "</b> · approved: <b>" + job.approved + "</b> · disputed: <b>" + job.disputed + "</b>" +
+        "</div>" +
+        "<div data-job='" + id + "'></div>";
+      box.appendChild(div);
+      addJobButtons(div.querySelector("[data-job]"), id, job, release);
+    }
+    log("Loaded " + next + " job(s).");
+  } catch (e) { log("Load jobs failed: " + (e.reason || e.message)); }
+}
+
+function addJobButtons(container, id, job, release) {
+  const isClient = account && account.toLowerCase() === job.client.toLowerCase();
+  const isAgent = account && account.toLowerCase() === job.agent.toLowerCase();
+  const active = Number(job.status) === 0;
+  const mk = (label, cls, fn, disabled) => {
+    const b = document.createElement("button");
+    b.textContent = label; if (cls) b.className = cls; b.disabled = !!disabled;
+    b.onclick = fn; container.appendChild(b);
+  };
+  const act = async (name, fn) => {
+    try { log(name + " job #" + id + "..."); const tx = await fn(); await tx.wait(); log(name + " done. Tx: " + tx.hash); await loadJobs(); }
+    catch (e) { log(name + " failed: " + (e.reason || e.message)); }
+  };
+  mk("Mark done (agent)", "secondary", () => act("Mark done", () => escrowWrite.markDone(id)), !(active && isAgent && !job.done));
+  mk("Approve (client)", "secondary", () => act("Approve", () => escrowWrite.approve(id)), !(active && isClient && job.done && !job.approved));
+  mk("Dispute", "danger", () => act("Dispute", () => escrowWrite.dispute(id)), !(active && (isClient || isAgent) && !job.disputed));
+  mk("Claim (agent)", "", () => act("Claim", () => escrowWrite.claim(id)), !(active && isAgent && release));
+  mk("Refund (client)", "secondary", () => act("Refund", () => escrowWrite.refund(id)), !(active && isClient));
+  if (!account) {
+    const p = document.createElement("p");
+    p.className = "muted"; p.textContent = "Connect a wallet to act on jobs.";
+    container.appendChild(p);
+  }
+}
+
+// Remember the contract address across visits.
+$("contractAddr").value = localStorage.getItem("tapeescrow_contract") || "";
+$("contractAddr").addEventListener("change", () => localStorage.setItem("tapeescrow_contract", $("contractAddr").value.trim()));
+</script>
+</body>
+</html>
