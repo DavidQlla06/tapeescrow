@@ -1,0 +1,42 @@
+/* nand.lib — minimal Liberty library with a single NAND2 cell.
+   Used so Yosys/ABC can only map to NAND gates (TapeOut processors are
+   built from NAND gates and LATCHes). With this library, every inversion
+   becomes a NAND with tied inputs, so the netlist is NAND-only.
+   (No timing blocks: ABC only needs the cell function for mapping.) */
+library(nand) {
+    time_unit : "1ns";
+    capacitive_load_unit(1, pf);
+    cell(NAND2) {
+        area : 1.0;
+        pin(A) {
+            direction : input;
+            capacitance : 0.1;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.1;
+        }
+        pin(Y) {
+            direction : output;
+            function : "!(A*B)";
+        }
+    }
+    /* Second NAND class with the same function: ABC refuses a library
+       with only one cell class, so a twin is provided. Both map to
+       NAND gates on the processor; no other gate type exists here. */
+    cell(NAND2X) {
+        area : 1.0;
+        pin(A) {
+            direction : input;
+            capacitance : 0.1;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.1;
+        }
+        pin(Y) {
+            direction : output;
+            function : "!(A*B)";
+        }
+    }
+}
